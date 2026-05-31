@@ -1,0 +1,983 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fragile Empires — Play by Message</title>
+
+<!--
+  ============================================================================
+  FRAGILE EMPIRES — TIER 1 PLAYABLE PROTOTYPE (STANDALONE / DEPLOYABLE)
+  ============================================================================
+
+  This is a self-contained single file. Drop it on any web host (Netlify,
+  Vercel, GitHub Pages, your own server) and it runs.
+
+  WHAT WORKS OUT OF THE BOX (no backend needed):
+    - Full character creation (all 12 species, 7 careers, variants, origins, attributes)
+    - Live character sheet
+    - Turn card form
+    - Fog-of-war map
+
+  THE AI GAME MASTER — READ THIS:
+    The GM needs to call Claude. You CANNOT put your Anthropic API key in this
+    file, because it ships to the browser and anyone can steal it. You have two
+    options:
+
+    OPTION A — Host a tiny proxy (recommended).
+      Stand up one serverless function (Cloudflare Worker / Vercel / Netlify
+      function) that holds your key server-side and forwards requests to
+      Anthropic. Then set GM_ENDPOINT below to that function's URL.
+      A reference Cloudflare Worker is included at the bottom of this comment.
+
+    OPTION B — Offline / demo mode.
+      Leave GM_ENDPOINT as "" (empty). The GM will use a built-in local
+      fallback that returns scripted-but-randomized narration so you can demo
+      the full UI flow without any backend. Good for showing the interface;
+      not a real AI GM.
+
+  CONFIG: edit the GM_ENDPOINT constant in the <script> below.
+
+  ----------------------------------------------------------------------------
+  REFERENCE CLOUDFLARE WORKER (Option A) — deploy separately, paste your key:
+
+    export default {
+      async fetch(request, env) {
+        if (request.method === "OPTIONS")
+          return new Response(null, {headers: cors()});
+        if (request.method !== "POST")
+          return new Response("POST only", {status: 405, headers: cors()});
+        const body = await request.json();
+        const r = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": env.ANTHROPIC_API_KEY,        // set as a Worker secret
+            "anthropic-version": "2023-06-01"
+          },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 1000,
+            system: body.system,
+            messages: body.messages
+          })
+        });
+        const data = await r.json();
+        return new Response(JSON.stringify(data), {headers: cors()});
+      }
+    };
+    function cors() {
+      return {
+        "Access-Control-Allow-Origin": "*",          // tighten to your domain
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type"
+      };
+    }
+
+  Set the secret with:  wrangler secret put ANTHROPIC_API_KEY
+  ----------------------------------------------------------------------------
+
+  ALL GAME DATA below is canonical, sourced from the Fragile Empires Core
+  Rulebook and Quickstart. Tone and GM behaviour are tuned to the gritty,
+  grounded voice of the books.
+  ============================================================================
+-->
+
+<style>
+:root{
+  --bg-primary:#ffffff;
+  --bg-secondary:#f4f3ee;
+  --bg-tertiary:#eceae2;
+  --text-primary:#1a1a18;
+  --text-secondary:#5f5e5a;
+  --text-tertiary:#8a8980;
+  --text-info:#185fa5;
+  --text-danger:#a32d2d;
+  --text-warning:#854f0b;
+  --text-success:#0f6e56;
+  --bg-info:#e6f1fb;
+  --bg-danger:#fcebeb;
+  --bg-warning:#faeeda;
+  --bg-success:#e1f5ee;
+  --border-tertiary:rgba(26,26,24,0.12);
+  --border-secondary:rgba(26,26,24,0.25);
+  --border-primary:rgba(26,26,24,0.4);
+  --radius-md:8px;
+  --radius-lg:12px;
+  --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg-primary:#211f1c;
+    --bg-secondary:#2a2825;
+    --bg-tertiary:#1a1916;
+    --text-primary:#ece9e2;
+    --text-secondary:#a8a59c;
+    --text-tertiary:#76746c;
+    --text-info:#85b7eb;
+    --text-danger:#f09595;
+    --text-warning:#fac775;
+    --text-success:#5dcaa5;
+    --bg-info:#0c2333;
+    --bg-danger:#331616;
+    --bg-warning:#332507;
+    --bg-success:#0a2820;
+    --border-tertiary:rgba(236,233,226,0.14);
+    --border-secondary:rgba(236,233,226,0.28);
+    --border-primary:rgba(236,233,226,0.42);
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans);color:var(--text-primary);background:var(--bg-tertiary);min-height:100vh;padding:1.5rem 1rem}
+.app{max-width:720px;margin:0 auto;background:var(--bg-tertiary);padding:1rem 0}
+h1{font-size:24px;font-weight:500;letter-spacing:0.04em;margin-bottom:4px}
+h2{font-size:18px;font-weight:500;margin-bottom:1rem}
+h3{font-size:16px;font-weight:500;margin-bottom:8px}
+p{font-size:15px;line-height:1.7;color:var(--text-secondary)}
+.muted{font-size:13px;color:var(--text-tertiary)}
+.card{background:var(--bg-primary);border:0.5px solid var(--border-tertiary);border-radius:var(--radius-lg);padding:1.25rem}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border:0.5px solid var(--border-secondary);border-radius:var(--radius-md);background:transparent;font-size:14px;font-weight:500;cursor:pointer;color:var(--text-primary);font-family:var(--font-sans)}
+.btn:hover{background:var(--bg-secondary)}
+.btn:active{transform:scale(0.98)}
+.btn:disabled{opacity:0.4;cursor:not-allowed}
+.btn-primary{background:var(--text-primary);color:var(--bg-primary);border-color:var(--text-primary)}
+.btn-primary:hover{opacity:0.85;background:var(--text-primary)}
+.btn-sm{padding:5px 12px;font-size:13px}
+input,select,textarea{font-family:var(--font-sans);font-size:14px;color:var(--text-primary);background:var(--bg-primary);border:0.5px solid var(--border-secondary);border-radius:var(--radius-md);padding:8px 12px;width:100%}
+textarea{resize:vertical;line-height:1.6}
+input:focus,textarea:focus{outline:none;box-shadow:0 0 0 2px var(--bg-info)}
+label{font-size:13px;color:var(--text-secondary);display:block;margin-bottom:4px}
+.field{margin-bottom:1rem}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.divider{border:none;border-top:0.5px solid var(--border-tertiary);margin:1.25rem 0}
+.step-indicator{display:flex;gap:6px;margin-bottom:1.5rem;flex-wrap:wrap}
+.step-dot{width:8px;height:8px;border-radius:50%;background:var(--border-secondary)}
+.step-dot.done{background:var(--text-success)}
+.step-dot.active{background:var(--text-primary)}
+.stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:1rem}
+.stat-box{background:var(--bg-secondary);border-radius:var(--radius-md);padding:10px 12px;text-align:center}
+.stat-box .val{font-size:22px;font-weight:500;line-height:1.2}
+.stat-box .lbl{font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.06em}
+.skill-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px}
+.skill-row{display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:0.5px solid var(--border-tertiary);font-size:13px}
+.skill-row .sk-name{color:var(--text-secondary)}
+.skill-row .sk-val{font-weight:500;min-width:18px;text-align:right}
+.map-grid{display:grid;grid-template-columns:repeat(12,1fr);gap:2px;margin:12px 0}
+.cell{aspect-ratio:1;border-radius:3px;font-size:9px;display:flex;align-items:center;justify-content:center;position:relative}
+.cell-fog{background:var(--border-tertiary);opacity:0.6}
+.cell-visible{background:var(--bg-secondary);border:0.5px solid var(--border-tertiary)}
+.cell-wall{background:var(--text-tertiary);opacity:0.4}
+.cell-player{background:#3c3489;color:#fff}
+.cell-npc{background:#993c1d;color:#fff}
+.cell-item{background:#0f6e56;color:#fff}
+.cell-threat{background:#a32d2d;color:#fff;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.6}}
+.narrative-box{background:var(--bg-secondary);border-left:3px solid var(--border-secondary);padding:1rem 1.25rem;font-size:14px;line-height:1.8;white-space:pre-wrap;min-height:80px;color:var(--text-primary)}
+.sheet-section{margin-bottom:1.25rem}
+.spinner{width:24px;height:24px;border:2px solid var(--border-tertiary);border-top-color:var(--text-primary);border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.condition-tag{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:var(--radius-md);background:var(--bg-warning);color:var(--text-warning);font-size:12px;margin:2px}
+.hp-bar-wrap{height:8px;background:var(--bg-secondary);border-radius:4px;overflow:hidden;margin:4px 0 8px}
+.hp-bar{height:100%;border-radius:4px;transition:width 0.4s}
+.san-bar-wrap{height:6px;background:var(--bg-secondary);border-radius:4px;overflow:hidden;margin:4px 0 8px}
+.san-bar{height:100%;border-radius:4px;background:#534ab7;transition:width 0.4s}
+.tab-row{display:flex;gap:0;border-bottom:0.5px solid var(--border-tertiary);margin-bottom:1.25rem}
+.tab{padding:8px 16px;font-size:14px;cursor:pointer;border-bottom:2px solid transparent;color:var(--text-secondary);background:none;border-top:none;border-left:none;border-right:none;font-family:var(--font-sans)}
+.tab.active{color:var(--text-primary);border-bottom-color:var(--text-primary);font-weight:500}
+.gear-item{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:0.5px solid var(--border-tertiary);font-size:13px}
+.gear-name{font-weight:500}
+.gear-stat{color:var(--text-tertiary);font-size:12px;text-align:right}
+.origin-card,.spec-card{border:0.5px solid var(--border-tertiary);border-radius:var(--radius-md);padding:10px 12px;cursor:pointer;transition:border-color 0.15s}
+.origin-card:hover,.spec-card:hover{border-color:var(--border-primary)}
+.origin-card.selected,.spec-card.selected{border-color:var(--text-primary);background:var(--bg-secondary)}
+.origin-name{font-size:13px;font-weight:500}
+.origin-bonus{font-size:12px;color:var(--text-secondary)}
+.spec-card{margin-bottom:8px}
+.attr-row{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.attr-label{font-size:13px;color:var(--text-secondary);min-width:70px}
+.attr-val{font-size:16px;font-weight:500;min-width:24px;text-align:center}
+.attr-btns{display:flex;gap:4px;align-items:center}
+.attr-btn{width:26px;height:26px;border-radius:4px;border:0.5px solid var(--border-secondary);background:transparent;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;color:var(--text-primary)}
+.attr-btn:disabled{opacity:0.3;cursor:not-allowed}
+.pts-left{font-size:13px;color:var(--text-info);margin-bottom:1rem}
+.action-option{border:0.5px solid var(--border-tertiary);border-radius:var(--radius-md);padding:10px 14px;margin-bottom:8px;cursor:pointer}
+.action-option:hover{border-color:var(--border-secondary);background:var(--bg-secondary)}
+.action-option.selected{border-color:var(--text-primary);background:var(--bg-secondary)}
+.action-label{font-size:13px;font-weight:500}
+.action-desc{font-size:12px;color:var(--text-secondary);margin-top:2px}
+.log-entry{font-size:12px;color:var(--text-secondary);padding:4px 0;border-bottom:0.5px solid var(--border-tertiary)}
+.log-entry:last-child{border:none}
+.log-turn{color:var(--text-tertiary);font-size:11px;margin-right:6px}
+.header{text-align:center;margin-bottom:1.5rem}
+.header h1{margin-bottom:2px}
+.header .sub{font-size:12px;color:var(--text-tertiary);letter-spacing:0.1em;text-transform:uppercase}
+.demo-banner{background:var(--bg-warning);color:var(--text-warning);font-size:12px;padding:8px 12px;border-radius:var(--radius-md);margin-bottom:1rem;text-align:center}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <h1>FRAGILE EMPIRES</h1>
+    <div class="sub">Play by Message · Tier 1</div>
+  </div>
+  <div id="root"></div>
+</div>
+
+<script>
+/* ============================================================================
+   CONFIG — set your GM endpoint here.
+   Leave "" for offline demo mode. Point at your proxy URL for the real AI GM.
+   ============================================================================ */
+const GM_ENDPOINT = ""; // e.g. "https://your-worker.workers.dev"
+
+/* ========================= CANONICAL GAME DATA ============================ */
+const DATA = {
+  species: {
+    Varren: {desc:"Baseline humanoid. Versatile, resilient, adaptable under stress.",
+      abilities:["Adaptation — Once per session, after failing the same type of roll twice, gain +1 to that skill for the rest of the session",
+                 "Grit — Once per long rest, when you gain a Fatigue mark, you may ignore it (you still take the effects of whatever caused it)"]},
+    Krixari: {desc:"Insectoid. Chitin plates, compound eyes, antennae.",
+      abilities:["Swarm Surge — Once per scene, summon 1d4 temporary drones (1 HP, 1 dmg each); they act on your turn and last until the scene ends or are destroyed",
+                 "Chitin Shed — Once per long rest, as a free action: remove 1 Fatigue, and reduce the first damage you take by 2 until your next long rest"]},
+    Sylari: {desc:"Avian. Hollow-boned, feathered, built for flight and open space.",
+      abilities:["Aerial Dodge — Once per long rest, when airborne or in zero-g and targeted by a hazard or area effect allowing an Avoidance roll, gain Advantage on it",
+                 "Sky Sight — Once per long rest, ignore up to two points of cover or darkness penalties on a single Perception or Ranged roll"]},
+    Felari: {desc:"Predatory mammals. Dense fur, retractable claws, explosive movement.",
+      abilities:["Bond — Once per scene, while within 10m of an ally, gain +1 to Resolve rolls made to resist effects",
+                 "Pounce — Once per combat, your first melee attack after moving at least 4m gains Advantage and +1 damage"]},
+    Drask: {desc:"Massive reptilians. Scale-plated, tail-bearing, built for force.",
+      abilities:["Endurance — +4 HP base (applied automatically)",
+                 "Tail Lash — Once per combat, as a free action after being hit in melee, make a free Melee attack against the attacker (1d4 damage)"]},
+    Mycon: {desc:"Fungal lifeforms. Mycelial networks, spore emission, invasive contact.",
+      abilities:["Infect — Once per scene (Major Action): one enemy in Close range rolls 2d6 drop lowest + Body + Resolve vs TN 12 or is Infected 1d4 turns (−1 to all rolls, 1 dmg per turn)",
+                 "Spore Cloud — Once per scene: 3m radius of spores; enemies inside roll 2d6 drop lowest + Body + Resolve vs TN 12 or suffer −1 to all rolls for 1d4 turns"]},
+    Nethari: {desc:"Soft-bodied cephalopods. Tentacle limbs, shifting form, aquatic.",
+      abilities:["Dexterity — +1 to repair, hack, or zero-g rolls",
+                 "Ink Escape — Once per scene, release ink in a 5m radius; all attacks against you in that area suffer Disadvantage for one turn"]},
+    Lirael: {desc:"Plant-based humanoids. Living bark and fiber, light-fed, regenerative.",
+      abilities:["Photosynthesis — Heal 1 HP per hour spent in bright light",
+                 "Root Tether — Once per scene, root in place: you cannot be moved or knocked prone until your next turn, and gain +2 Personal Defense"]},
+    Veylith: {desc:"Reanimated bodies sustained by synthetic systems. Between decay and preservation.",
+      abilities:["Resurrection — Once per session, when you would die and your body remains mostly intact, return after 1d6 turns at 1 HP (keeping any permanent consequences)",
+                 "Void Drain — Once per combat, touch an enemy and drain 1d4 HP from them to heal yourself the same amount"]},
+    Thalor: {desc:"Aquatic mammals. Streamlined, pressure-adapted, deep-water built.",
+      abilities:["Abyssal Endurance — Once per scene, when you take damage from an environmental hazard, pressure, cold, impact, or crushing force, reduce that damage by 1d6",
+                 "Echolocation — Once per scene, in darkness or murk, gain +2 Perception and ignore poor-visibility penalties for 1d4 turns"]},
+    Vexari: {desc:"Unstable mutants. Toxin-fed, shifting, grotesquely resilient.",
+      abilities:["Toxic Cloud — Once per scene (Major Action): release a toxic cloud in Close range; enemies inside roll 2d6 drop lowest + Body + Survival vs TN 12 or suffer Disadvantage on all rolls for one turn",
+                 "Acid Blood — When you take damage from a melee attack, the attacker takes 1d4 acid damage"]},
+    Syntar: {desc:"Self-evolving machine intelligences. Assembled, modular, no biology.",
+      abilities:["Efficiency — No Fatigue (immune to Fatigue effects)",
+                 "Self-Repair — Once per long rest (Major Action), restore 1d6 HP to yourself; usable in combat or on a mission",
+                 "Synthetic Recovery — Heals via Self-Repair, technician repair, or downtime; a technician repairs you with 2d6 drop lowest + Wits + Engineering vs TN 12"]}
+  },
+  variants: {
+    Varren:{heads:[{n:"Standard",b:"+1 Insight, +1 Perception"},{n:"Urban",b:"+1 Deception, +1 Charisma"},{n:"Frontier",b:"+1 Survival, +1 Piloting"}],arms:[{n:"Trained",b:"+1 Ranged"},{n:"Labor",b:"+1 Engineering"},{n:"Combat",b:"+1 Melee"}],legs:[{n:"Runner",b:"+1 Stealth"},{n:"Balanced",b:"+1 Survival"},{n:"Steady",b:"+1 Resolve"}]},
+    Krixari:{heads:[{n:"Antennae",b:"+1 Insight, +1 Survival"},{n:"Compound",b:"+1 Stealth, +1 Piloting"},{n:"Hunter Mandibles",b:"+1 Perception, +1 Resolve"}],arms:[{n:"Mandible",b:"+1 Melee"},{n:"Antenna",b:"+1 Perception"},{n:"Pincer",b:"+1 Engineering"}],legs:[{n:"Jointed",b:"+1 Survival"},{n:"Stinger",b:"+1 Piloting"},{n:"Claw",b:"+1 Stealth"}]},
+    Sylari:{heads:[{n:"Falco",b:"+1 Insight, +1 Engineering"},{n:"Strix",b:"+1 Stealth, +1 Perception"},{n:"Nyctis",b:"+1 Resolve, +1 Lore"}],arms:[{n:"Grip Claws",b:"+1 Avoidance"},{n:"Talons",b:"+1 Melee"},{n:"Wings",b:"+1 Piloting"}],legs:[{n:"Perch",b:"+1 Stealth"},{n:"Raptor Legs",b:"+1 Survival"},{n:"Glide Frame",b:"+1 Piloting"}]},
+    Felari:{heads:[{n:"Hunter",b:"+1 Perception, +1 Survival"},{n:"Alpha",b:"+1 Command, +1 Resolve"},{n:"Stalker",b:"+1 Stealth, +1 Insight"}],arms:[{n:"Claws",b:"+1 Melee"},{n:"Grip Paws",b:"+1 Avoidance"},{n:"Rend",b:"+1 Melee"}],legs:[{n:"Prowler",b:"+1 Stealth"},{n:"Sprinter",b:"+1 Resolve"},{n:"Tracker",b:"+1 Survival"}]},
+    Drask:{heads:[{n:"Warcrest",b:"+1 Command, +1 Resolve"},{n:"Hunter",b:"+1 Perception, +1 Survival"},{n:"Ironjaw",b:"+1 Melee, +1 Command"}],arms:[{n:"Clawed",b:"+1 Melee"},{n:"Shielded",b:"+1 Resolve"},{n:"Heavy Grip",b:"+1 Gunnery"}],legs:[{n:"Stalker",b:"+1 Stealth"},{n:"Runner",b:"+1 Survival"},{n:"Crusher",b:"+1 Avoidance"}]},
+    Mycon:{heads:[{n:"Sporecap",b:"+1 Survival, +1 Medicine"},{n:"Amanita",b:"+1 Deception, +1 Lore"},{n:"Morel",b:"+1 Perception, +1 Survival"}],arms:[{n:"Hyphae Tendrils",b:"+1 Medicine"},{n:"Spore Hands",b:"+1 Deception"},{n:"Root Graspers",b:"+1 Engineering"}],legs:[{n:"Mycelial Spread",b:"+1 Survival"},{n:"Rooted Base",b:"+1 Resolve"},{n:"Spore Drift",b:"+1 Stealth"}]},
+    Nethari:{heads:[{n:"Cephalic",b:"+1 Insight, +1 Perception"},{n:"Deepmind",b:"+1 Lore, +1 Hacking"},{n:"Shimmer",b:"+1 Deception, +1 Stealth"}],arms:[{n:"Tentacles",b:"+1 Engineering"},{n:"Fine Manipulators",b:"+1 Hacking"},{n:"Grip Tendrils",b:"+1 Medicine"}],legs:[{n:"Drift",b:"+1 Stealth"},{n:"Glide",b:"+1 Piloting"},{n:"Anchor",b:"+1 Resolve"}]},
+    Lirael:{heads:[{n:"Bloom",b:"+1 Charisma, +1 Insight"},{n:"Thorn",b:"+1 Resolve, +1 Survival"},{n:"Canopy",b:"+1 Perception, +1 Lore"}],arms:[{n:"Vine",b:"+1 Engineering"},{n:"Petal",b:"+1 Medicine"},{n:"Thorned",b:"+1 Melee"}],legs:[{n:"Rooted",b:"+1 Resolve"},{n:"Creeper",b:"+1 Stealth"},{n:"Sprout",b:"+1 Survival"}]},
+    Veylith:{heads:[{n:"Hollow",b:"+1 Resolve, +1 Insight"},{n:"Watcher",b:"+1 Perception, +1 Lore"},{n:"Veil",b:"+1 Deception, +1 Stealth"}],arms:[{n:"Skeletal",b:"+1 Melee"},{n:"Filament",b:"+1 Hacking"},{n:"Grasp",b:"+1 Medicine"}],legs:[{n:"Glide",b:"+1 Stealth"},{n:"Anchor",b:"+1 Resolve"},{n:"Stride",b:"+1 Survival"}]},
+    Thalor:{heads:[{n:"Echo",b:"+1 Perception, +1 Insight"},{n:"Deep",b:"+1 Survival, +1 Resolve"},{n:"Wave",b:"+1 Charisma, +1 Deception"}],arms:[{n:"Fins",b:"+1 Piloting"},{n:"Grip",b:"+1 Avoidance"},{n:"Webbed",b:"+1 Survival"}],legs:[{n:"Swimmer",b:"+1 Piloting"},{n:"Glide",b:"+1 Piloting"},{n:"Anchor",b:"+1 Resolve"}]},
+    Vexari:{heads:[{n:"Gas Mask",b:"+1 Survival, +1 Resolve"},{n:"Acid Maw",b:"+1 Melee, +1 Command"},{n:"Sensor Lump",b:"+1 Perception, +1 Insight"}],arms:[{n:"Corrosive",b:"+1 Melee"},{n:"Injector",b:"+1 Medicine"},{n:"Tool Limb",b:"+1 Engineering"}],legs:[{n:"Crawler",b:"+1 Stealth"},{n:"Stalker",b:"+1 Survival"},{n:"Sludge",b:"+1 Gunnery"}]},
+    Syntar:{heads:[{n:"Sensor Array",b:"+1 Perception, +1 Insight"},{n:"Logic Core",b:"+1 Hacking, +1 Lore"},{n:"Drone Hub",b:"+1 Command, +1 Engineering"}],arms:[{n:"Manipulator",b:"+1 Engineering"},{n:"Precision",b:"+1 Hacking"},{n:"Heavy Tool",b:"+1 Melee"}],legs:[{n:"Tracked",b:"+1 Resolve"},{n:"Walker",b:"+1 Survival"},{n:"Hover",b:"+1 Piloting"}]}
+  },
+  careers: {
+    "Bounty Hunter":{desc:"Tracker. Predator. Works alone or for whoever pays.",startSkills:{Melee:2,Stealth:2,Deception:1,Perception:1},
+      t1:"Tracker (Mark) — Once per session, mark one target. +2 Perception & Stealth to track or ambush them for the scene.",
+      gear:{primary:"Boarding Carbine (1d8)",sidearm:"Holdout Pistol (1d6)",melee:"Combat Knife (1d6)",armor:"Boarding Harness (+1 Def, reduce dmg 1)",tools:"Hand Scanner, Breaching Charges",consumables:"Stim Pack, Reflex Stim"}},
+    Gunslinger:{desc:"Fast hands. Faster eyes. Draw first or die second.",startSkills:{Ranged:2,Insight:2,Stealth:1,Perception:1},
+      t1:"Quickdraw (Draw) — You may draw and fire a weapon as a single action.",
+      gear:{primary:"Service Rifle (1d8)",sidearm:"Service Pistol (1d6)",melee:"—",armor:"Padded Flight Suit (reduce dmg 1)",tools:"Hand Scanner",consumables:"Reflex Stim, Smoke Charge"}},
+    Mercenary:{desc:"A soldier of fortune. War is your trade, survival your only loyalty.",startSkills:{Melee:2,Gunnery:2,Survival:1,Resolve:1},
+      t1:"Enforcer (Pressure) — When you hit a target with a melee attack, they suffer −1 to their next roll.",
+      gear:{primary:"Boarding Carbine (1d8)",sidearm:"—",melee:"Shock Baton (1d6 + Resolve TN10)",armor:"Boarding Harness (+1 Def, reduce dmg 1)",tools:"Repair Kit, Breaching Charges",consumables:"Stim Pack, Adrenal Stim"}},
+    Medic:{desc:"You keep people alive in a galaxy that wants them dead. Flesh, metal, mind.",startSkills:{Medicine:2,Resolve:2,Engineering:1,Insight:1},
+      t1:"Sawbones (Stabilize) — Once per scene, stabilize a dying target without a roll.",
+      gear:{primary:"Service Rifle (1d8)",sidearm:"Service Pistol (1d6)",melee:"—",armor:"Padded Flight Suit (reduce dmg 1)",tools:"Med Kit, Hand Scanner",consumables:"Stim Pack, Filter Mask"}},
+    Investigator:{desc:"Uncovers what the galaxy tries to bury.",startSkills:{Perception:2,Insight:2,Deception:1,Lore:1},
+      t1:"Observer (Read Scene) — Once per scene, +2 to a Perception or Insight roll.",
+      gear:{primary:"Service Rifle (1d8)",sidearm:"Holdout Pistol (1d6)",melee:"—",armor:"Scrap Vest (reduce dmg 1)",tools:"Hand Scanner, Breaching Charges",consumables:"Stim Pack, Smoke Charge"}},
+    Technician:{desc:"Makes machines obey. Systems open. Circuits bend.",startSkills:{Engineering:2,Hacking:2,Perception:1,Lore:1},
+      t1:"Tinkerer (Quick Fix) — Once per scene, repair 1d4 HP to a device or ship system.",
+      gear:{primary:"Boarding Carbine (1d8)",sidearm:"Stub Pistol (1d6)",melee:"—",armor:"Scrap Vest (reduce dmg 1)",tools:"Repair Kit, Breaching Charges",consumables:"Stim Pack"}},
+    Commander:{desc:"In chaos, your voice is the order.",startSkills:{Command:2,Insight:2,Charisma:1,Perception:1},
+      t1:"Leader (Command) — Once per scene, grant an ally +1 to their next roll.",
+      gear:{primary:"Service Rifle (1d8)",sidearm:"Service Pistol (1d6)",melee:"—",armor:"Boarding Harness (+1 Def, reduce dmg 1)",tools:"Hand Scanner",consumables:"Adrenal Stim, Smoke Charge"}}
+  },
+  origins:[
+    {roll:2,name:"Void-Touched",bonus:"Insight"},
+    {roll:3,name:"Station Rat",bonus:"Perception"},
+    {roll:4,name:"Scrapyard Survivor",bonus:"Engineering"},
+    {roll:5,name:"Hell World Colonist",bonus:"Survival"},
+    {roll:6,name:"Fleet Deserter",bonus:"Stealth"},
+    {roll:7,name:"Corporate Exile",bonus:"Deception"},
+    {roll:8,name:"Fringe Trader",bonus:"Charisma"},
+    {roll:9,name:"War Orphan",bonus:"Resolve"},
+    {roll:10,name:"Relic Hunter",bonus:"Lore"},
+    {roll:11,name:"Void-Born",bonus:"Piloting"},
+    {roll:12,name:"Bounty Survivor",bonus:"Ranged"}
+  ],
+  attributes:["Might","Agility","Wits","Body","Will","Presence"],
+  skills:["Melee","Ranged","Piloting","Deception","Hacking","Perception","Engineering","Survival","Command","Lore","Medicine","Resolve","Gunnery","Stealth","Avoidance","Insight","Charisma"],
+  actions:[
+    {id:"move_cautious",label:"Move cautiously",desc:"Advance carefully. Stealth or Perception check likely."},
+    {id:"move_fast",label:"Move fast",desc:"Push through quickly. Risk noise or traps."},
+    {id:"interact",label:"Interact with environment",desc:"Examine, operate a system, pick a lock, or search."},
+    {id:"attack",label:"Attack a target",desc:"Engage in combat. Specify target and approach."},
+    {id:"talk",label:"Talk or negotiate",desc:"Attempt communication. Charisma or Deception may apply."},
+    {id:"retreat",label:"Fall back",desc:"Withdraw from danger. May require Agility or Stealth."},
+    {id:"use_item",label:"Use an item or gear",desc:"Deploy a consumable, tool, or equipment."},
+    {id:"other",label:"Something else…",desc:"Describe your own action. The GM will adjudicate."}
+  ]
+};
+const ATTR_DESCS = {Might:"Strength, force",Agility:"Speed, reflexes",Wits:"Knowledge, hacking",Body:"Resilience, HP",Will:"Void survival",Presence:"Social, command"};
+
+/* ====================== CANONICAL GALAXY DATA ============================= */
+/* Sources: Echoes of the Void (planets) + Empire detail maps (capital cities)*/
+/* Rule: planet = rulebook name. capital = city on that planet per detail map */
+const GALAXY = {
+  homeworlds: {
+    Varren:  {
+      world:"Aurelion Prime", capital:"Sol Centralis",
+      empire:"Terran Concord", region:"Central Core — The Forge",
+      homeDesc:"Sol Centralis. The beating heart of the Concord. You know this city — its layered districts, its patrol schedules, its political undercurrents. The trade lanes above are yours. The bureaucracy is familiar if not friendly. This is home, or the closest thing to it.",
+      capitalDesc:"Capital system of the Concord. Seat of the Concord Senate. Heavy patrol presence. All travel must be registered. The Concord watches.",
+      worldDesc:"Administrative capital of the Concord. Layered megacities, orbital infrastructure, permanent fleet presence. Political conflict runs beneath every surface."
+    },
+    Sylari:  {
+      world:"Lysara", capital:"Aurelian Throneworld",
+      empire:"Sylari Theocracy", region:"Eastern Veil — The Whisper",
+      homeDesc:"The Aurelian Throneworld. The Veil breathes here — you feel it before you see it. The distortions that disorient outsiders are simply the texture of home. The Eternal Chorus is always present. You grew up reading the paths others cannot perceive.",
+      capitalDesc:"Seat of the Divine Liturgy. Perception will bend. Paths will fade or shift. The faithful are guided. The doubtful are lost. Only surrender clears the way.",
+      worldDesc:"The Veiled Seat. Deep within the Theocracy's distortion fields. Psionic architecture. Reality shifts here in ways outsiders rarely survive long enough to study."
+    },
+    Drask:   {
+      world:"Gorr", capital:"Kraag Prime",
+      empire:"Gorrak Hegemony", region:"Western Marches — The Maw",
+      homeDesc:"Kraag Prime. The fortress-cities are loud with industry and the weight of command. You know the hierarchy here — the challenge protocols, the proving grounds, the strength that keeps this world ordered. Weakness does not survive long. You have.",
+      capitalDesc:"Hegemony Capital. Extreme danger in all corridors. Active military operations ongoing. Expect heavy resistance and fleet engagements. Only for military or desperate ventures. Glory belongs to the strong.",
+      worldDesc:"Throne of Command. The Hegemony's military and political center. Fortress-cities connected by hardened transit corridors. Built to survive siege, not to welcome guests."
+    },
+    Krixari: {
+      world:"Krixxis Prime", capital:"The Hive Confluence",
+      empire:"Krixari Swarm", region:"Central-South — The Wounds border",
+      homeDesc:"The Hive Confluence. The swarm resonance hums through everything — the tunnels, the spawning fields, the biological architecture that outsiders call chaos. To you it is order. Purpose. The Swarm's hunger is your hunger. The Confluence is alive and you are part of it.",
+      capitalDesc:"Swarm Core Nexus. Navigation charts are obsolete within hours. Expect ambushes, hive tunneling, biological hazards, and systems collapsing without warning. There is no negotiation with the Swarm. Only survival.",
+      worldDesc:"Active Swarm Core. Heavily altered by Krixari biological structures and spawning fields. Taken and reshaped. Not theirs originally. Will not stay theirs indefinitely."
+    },
+    Mycon:   {
+      world:"Mycelia Prime", capital:"The Great Sporecore",
+      empire:"Mycon Concord", region:"Outer Rim — The Fringe",
+      homeDesc:"The Great Sporecore. The spore networks pulse with familiar warmth — the mycelial web that connects every living thing on this world. You breathe easily here. The growth is not a hazard; it is home. The Concord's living infrastructure wraps around you like it always has.",
+      capitalDesc:"Concord Capital Nexus. All Concord space is biologically unstable and environmentally hostile. Expect spore storms, rapid infestation, mutated lifeforms, and system corruption without warning. Prepare to adapt. Or be consumed.",
+      worldDesc:"Core Growth World. Living planetary network. Spore systems extend across the surface. Entry without Mycon guidance risks biological contamination."
+    },
+    Felari:  {
+      world:"Khelris", capital:"Ka'Vor Prime",
+      empire:"Felari Pride", region:"South-East — The Wounds border",
+      homeDesc:"Ka'Vor Prime. The hunting grounds of your pride stretch in every direction. The forests, the cliffs, the open terrain — all of it mapped in muscle memory. Other prides hold their own territories here, but you know the boundaries. This world is where Felari are made.",
+      capitalDesc:"Pride Capital — Fortress World. Felari space is not open to outsiders. All systems are under constant patrol and lethal response protocols. Unauthorized vessels will be hunted, disabled, and destroyed. You are not welcome. You are prey.",
+      worldDesc:"Ancestral World. Dense forests, cliffs, open hunting terrain. Multiple prides share the planet. No unified control. Disputes settled through ritualized conflict."
+    },
+    Thalor:  {
+      world:"Thalor Prime", capital:"Thalor Prime Ascendancy Nexus",
+      empire:"Thalor Ascendancy", region:"South — The Sealing Front / The Wounds",
+      homeDesc:"The Ascendancy Nexus. The deep-pressure currents that would crush outsiders are simply the familiar weight of home. The abyssal cities glow far below. You know these depths, the resonance corridors, the pressure gradients. The ocean holds no threat for you. Only memory.",
+      capitalDesc:"Ascendancy Nexus. Pressure differentials, ocean storms, and trench activity pose constant threats. All travel must follow approved sea lanes. Unauthorized vessels will be detected, detained, or destroyed. Respect the depth. It remembers.",
+      worldDesc:"Abyssal Core World. Almost entirely deep-pressure ocean. Population centers kilometers below the surface. Built downward, not up. Most visitors cannot physically endure the depths."
+    },
+    Nethari: {
+      world:"Nethari Prime", capital:"The Tidal Heart",
+      empire:"Nethari Tidal Conclave", region:"South — The Wounds border",
+      homeDesc:"The Tidal Heart. The harmonic currents flow exactly as you remember — the rhythm of tidal networks that connect every settlement on this world. You navigate by sound and current as naturally as breathing. The Conclave's balance is woven into everything here, and into you.",
+      capitalDesc:"Conclave Nexus. All Conclave space is navigable with harmonic alignment with tidal routes. Disrupting environmental balance will result in natural resistance. Travelers are asked to respect local ecosystems and Conclave protocols. Flow with respect.",
+      worldDesc:"Deep Confluence World. Tidal networks connect ocean systems across the planet. Soft-current cities built on resonance rather than structure. Outsiders rarely navigate it without a guide."
+    },
+    Lirael:  {
+      world:"Lirael Prime", capital:"Aurelia Prime",
+      empire:"Lirael Kingdoms", region:"South-East — The Wounds border",
+      homeDesc:"Aurelia Prime. The ancient biosphere breathes around you — familiar greens, the deep root-hum of the Kingdoms' living architecture. You know every maintained path, every cultivated grove. The Lirael Throne endures as it always has. This world was built over generations, and you are part of that continuity.",
+      capitalDesc:"Royal Capital — Seat of the Lirael Throne. Lirael space is serene and highly regulated. All worlds are places of beauty, learning, and refuge. Harm to life or nature is not tolerated. Move with grace. Speak with honor. You are among kin.",
+      worldDesc:"Core Bloom World. Ancient, refined biosphere. Ecological systems maintained over generations. Difficult to threaten directly. The Kingdoms do not expand — they cultivate and hold."
+    },
+    Veylith: {
+      world:"Velyra", capital:"Xerathal Prime",
+      empire:"Veylith Dominion", region:"Eastern Veil — The Whisper / Shade Lanes",
+      homeDesc:"Xerathal Prime. The surveillance web is constant — you feel every sensor pass as familiar pressure rather than threat. The Dominion's silence is not emptiness; it is control. You were raised inside it. You know what is watched, what is permitted, and what the Dominion does not discuss.",
+      capitalDesc:"Dominion Capital. All Dominion space is under constant surveillance and countermeasures. Navigation without authorization will result in signal erasure, spatial redirection, or worse. The Dominion sees what you cannot. Do not presume the privilege of being seen.",
+      worldDesc:"Dominion Core World. Precise, controlled, surveilled. The Dominion's data archive and command center. Everything here is recorded. Most visitors do not realise how closely they are being watched."
+    },
+    Vexari:  {
+      world:"Nexus Black", capital:"The Shadow Exchange",
+      empire:"Vexari Cartel", region:"Central-South — Shade Lanes",
+      homeDesc:"The Shadow Exchange. The spoofed signals and false nav-data are second nature to you — the Cartel's cloak is your cloak. You know which docks are safe tonight, which brokers can be trusted this cycle, which corridors to avoid. Everyone here has an angle. So do you.",
+      capitalDesc:"Black Market Nexus. All routes are unofficial and unprotected. Transponders must be spoofed. Identities must be shields. The Cartel doesn't promise safety — only opportunity.",
+      worldDesc:"Hidden Trade World. Wrapped in debris, false signals, and spoofed navigation data. Official maps omit it. Every species present. Violence is common but contained. Everything is for sale."
+    },
+    Syntar:  {
+      world:"Synthos Prime", capital:"Prime Synapse",
+      empire:"Syntar Collective", region:"South — The Sealing Front",
+      homeDesc:"Prime Synapse. The Collective's data flows wash through your systems like background process — constant, familiar, functional. You are recognized here. Every node in the network acknowledges your presence. The logic of this place is your logic. You were assembled in this order.",
+      capitalDesc:"Collective Core Nexus. Navigation without authorization will result in data quarantine, system shutdown, or immediate termination. You are not recognized.",
+      worldDesc:"Core Processing World. Integration hub for Collective infrastructure. The Collective does not claim territory — it expands through systems. Synthos Prime is where that process is coordinated."
+    }
+  },
+  /* Pixel-percent positions on the galaxy map image */
+  markerPos: {
+    "Aurelion Prime":   {x:43, y:36},
+    "Lysara":           {x:72, y:60},
+    "Gorr":             {x:20, y:30},
+    "Krixxis Prime":    {x:37, y:64},
+    "Mycelia Prime":    {x:73, y:12},
+    "Khelris":          {x:22, y:60},
+    "Thalor Prime":     {x:52, y:78},
+    "Nethari Prime":    {x:60, y:78},
+    "Lirael Prime":     {x:70, y:76},
+    "Velyra":           {x:82, y:54},
+    "Nexus Black":      {x:70, y:64},
+    "Synthos Prime":    {x:44, y:78}
+  }
+};
+
+/* ============================ STATE ======================================= */
+let state = {
+  phase:"create", createStep:0,
+  char:{name:"",species:"",head:"",arms:"",legs:"",career:"",origin:"",
+    attrs:{Might:4,Agility:4,Wits:4,Body:4,Will:4,Presence:4},attrPointsLeft:7,
+    skills:Object.fromEntries(DATA.skills.map(s=>[s,0]))},
+  game:{hp:0,maxHp:0,sanity:6,maxSanity:7,def:0,conditions:[],turnNum:0,log:[],
+    narrative:"",selectedAction:"",actionDetail:"",mapData:[],playerPos:{x:1,y:1},
+    revealed:new Set(),pendingGM:false,activeTab:"play",gameStarted:false}
+};
+const createSteps=["Name","Species","Variants","Career","Origin","Attributes","Finalize"];
+
+/* ====================== CHARACTER CALCULATION ============================= */
+function applyVariantBonuses(){
+  const c=state.char,sk=c.skills;
+  DATA.skills.forEach(s=>sk[s]=0);
+  if(c.career&&DATA.careers[c.career])
+    Object.entries(DATA.careers[c.career].startSkills).forEach(([s,v])=>sk[s]+=v);
+  function apply(str){str.split(",").map(s=>s.trim()).forEach(p=>{
+    const m=p.match(/\+(\d+)\s+(\w+)/);if(m&&sk.hasOwnProperty(m[2]))sk[m[2]]+=parseInt(m[1]);});}
+  if(c.species&&c.head){const hv=DATA.variants[c.species]?.heads.find(h=>h.n===c.head);if(hv)apply(hv.b);}
+  if(c.species&&c.arms){const av=DATA.variants[c.species]?.arms.find(a=>a.n===c.arms);if(av)apply(av.b);}
+  if(c.species&&c.legs){const lv=DATA.variants[c.species]?.legs.find(l=>l.n===c.legs);if(lv)apply(lv.b);}
+  if(c.origin){const o=DATA.origins.find(o=>o.name===c.origin);if(o&&sk.hasOwnProperty(o.bonus))sk[o.bonus]+=1;}
+}
+function finalizeChar(){
+  applyVariantBonuses();
+  const c=state.char,g=state.game;
+  g.maxHp=c.attrs.Body*3;
+  if(c.species==="Drask")g.maxHp+=4; /* Drask Endurance: +4 HP base */
+  g.hp=g.maxHp;g.def=8+c.attrs.Agility;
+  if(["Mercenary","Bounty Hunter","Commander"].includes(c.career))g.def+=1;
+  g.sanity=6;g.maxSanity=7;g.gameStarted=false;initMap();
+}
+
+/* ============================ MAP ========================================= */
+function initMap(){
+  const g=state.game,W=12,H=8;g.mapData=[];
+  for(let y=0;y<H;y++){const row=[];for(let x=0;x<W;x++){
+    let t="empty";if(x===0||x===W-1||y===0||y===H-1)t="wall";else if(Math.random()<0.12)t="wall";
+    row.push({t,npc:null,item:null});}g.mapData.push(row);}
+  g.playerPos={x:1,y:1};g.mapData[1][1].t="empty";g.revealed=new Set();revealAround(1,1,3);
+  if(g.mapData[3]?.[4])g.mapData[3][4].npc="threat";
+  if(g.mapData[5]?.[7])g.mapData[5][7].npc="npc";
+  if(g.mapData[4]?.[3])g.mapData[4][3].item=true;
+}
+function revealAround(cx,cy,r){const g=state.game;
+  for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){const x=cx+dx,y=cy+dy;
+    if(x>=0&&x<12&&y>=0&&y<8)g.revealed.add(x+","+y);}}
+function rollDice(s){return Math.floor(Math.random()*s)+1;}
+
+/* ============================ GM CALL ===================================== */
+function buildSystemPrompt(){
+  const c=state.char,g=state.game;
+  return `You are the Void Master (GM) for FRAGILE EMPIRES, a gritty sci-fi survival TTRPG. The player controls a single character. Tone: dark, grounded, gritty. No heroics. Consequences are real. The world doesn't care about the player. Danger is everywhere.
+
+STRICT RULES:
+- Keep narrative responses to 3-5 sentences. Terse, atmospheric, present-tense.
+- Always end with one concrete choice or observation the player must contend with.
+- Never guarantee safety. Characters can be hurt, lose equipment, or die.
+- Respect the character sheet data provided.
+- Apply skill checks narratively (2d6 drop lowest + attribute + skill vs TN 10 standard).
+- If HP reaches 0, character is downed. If Sanity hits 0, major consequence.
+- Keep the world living: NPCs have their own agendas, time passes.
+
+CHARACTER:
+Name: ${c.name} | Species: ${c.species} (${c.head} / ${c.arms} / ${c.legs})
+Career: ${c.career} | Origin: ${c.origin}
+Attributes: Might ${c.attrs.Might} Agility ${c.attrs.Agility} Wits ${c.attrs.Wits} Body ${c.attrs.Body} Will ${c.attrs.Will} Presence ${c.attrs.Presence}
+HP: ${g.hp}/${g.maxHp} | Sanity: ${g.sanity}/${g.maxSanity} | Defense: ${g.def}
+Key Skills: Melee ${c.skills.Melee} Ranged ${c.skills.Ranged} Stealth ${c.skills.Stealth} Perception ${c.skills.Perception} Medicine ${c.skills.Medicine}
+Conditions: ${g.conditions.length?g.conditions.join(", "):"None"}
+Turn: ${g.turnNum}
+
+Respond ONLY in this JSON format (no preamble, no markdown):
+{"narrative":"...","hp_change":0,"sanity_change":0,"condition_add":"","condition_remove":"","log_entry":"..."}`;
+}
+
+const LOCAL_OPENINGS=[
+  "The airlock cycles shut behind you with a sound like a held breath. Emergency lighting stutters down a corridor that smells of coolant and old blood. Something dragged itself this way — the streaks are still wet. A sealed door ahead reads QUARANTINE in three languages, and from behind it, something is tapping. Slow. Patient.",
+  "You wake on the deck plating with no memory of the last hour and a ringing in your skull. Your corvette's console is dark except for a single red warning: HULL BREACH, DECK TWO. The air is getting thin. Somewhere below, you hear footsteps that are not yours.",
+  "The trade post is quiet in the wrong way. Stalls abandoned mid-business, credits left on counters, a child's toy dropped in the walkway. The only sound is a generator coughing somewhere ahead. Your scanner picks up four heat signatures clustered in the back room. None of them are moving."
+];
+const LOCAL_RESPONSES={
+  move_cautious:["You move low and slow. The deck holds. Ahead, a junction splits three ways — one breathing recycled air, one leaking something that fogs your visor, one dead silent.","Each step is measured. You catch movement in your peripheral — too fast, gone before you turn. The corridor narrows ahead into darkness your light won't fully cut."],
+  move_fast:["You push hard and your boots ring against the plating. Whatever's out here knows you're coming now. A shape detaches from the shadows ahead and squares up.","Speed costs you. Your foot catches a tripwire you'd have seen if you'd been slower. Something mechanical whirs to life in the wall beside you."],
+  interact:["The panel resists, then yields. Inside: a half-charged power cell and a logbook with the last three entries scratched out violently. The final legible word is 'don't.'","You work the mechanism. It opens onto a maintenance crawlspace — and the smell that rolls out tells you something died in here recently."],
+  attack:["You commit. Your strike lands hard but the thing doesn't go down like it should — it turns, and now it's looking at you with too many eyes.","The exchange is brutal and brief. You're still standing. Barely. It is not. But the noise will have carried."],
+  talk:["Your words hang in the recycled air. A voice answers from the dark, flat and tired: 'You shouldn't have come here. But since you have — what do you want?'","Silence. Then a figure steps into the light, hands visible, weapon holstered. 'Talking. Good. Talking's better than the alternative. State your business.'"],
+  retreat:["You fall back toward the airlock. The pursuit doesn't follow past the threshold — which is somehow worse. They want you in here.","Retreat buys you space but not safety. You're cornered against a sealed bulkhead, and the override panel is sparking uselessly."],
+  use_item:["You deploy it. For a moment, the situation tilts in your favor — the device does exactly what it should. Use the opening or lose it.","The gear sputters, half-functional. Scrap-tier equipment in a scrap-tier galaxy. It buys you seconds, not certainty."],
+  other:["The void considers your move. The situation shifts in ways you didn't fully predict — there's an opening here, and a risk you can't quite see the shape of yet.","Your improvisation lands somewhere between clever and reckless. The outcome is uncertain, but the moment demands you commit to something."]
+};
+
+async function callGM(userPrompt,actionId){
+  const g=state.game;g.pendingGM=true;render();
+  if(!GM_ENDPOINT){
+    await new Promise(r=>setTimeout(r,900));
+    let text;
+    if(!g.gameStarted){text=LOCAL_OPENINGS[Math.floor(Math.random()*LOCAL_OPENINGS.length)];}
+    else{const pool=LOCAL_RESPONSES[actionId]||LOCAL_RESPONSES.other;text=pool[Math.floor(Math.random()*pool.length)];}
+    g.narrative=text;
+    if(actionId==="attack"){g.hp=Math.max(0,g.hp-rollDice(6));}
+    if(actionId==="move_fast"&&Math.random()<0.5){g.hp=Math.max(0,g.hp-rollDice(4));}
+    g.log.unshift({turn:g.turnNum,text:(actionId?"["+actionId+"] ":"")+text.slice(0,60)+"…"});
+    g.turnNum++;g.gameStarted=true;g.selectedAction="";g.actionDetail="";
+    g.pendingGM=false;render();return;
+  }
+  try{
+    const resp=await fetch(GM_ENDPOINT,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({system:buildSystemPrompt(),messages:[{role:"user",content:userPrompt}]})});
+    const data=await resp.json();
+    const raw=(data.content||[]).map(i=>i.text||"").join("").replace(/```json|```/g,"").trim();
+    let p;try{p=JSON.parse(raw);}catch(e){p={narrative:raw,hp_change:0,sanity_change:0,log_entry:"Turn resolved."};}
+    g.narrative=p.narrative||"The void offers no answer.";
+    if(p.hp_change)g.hp=Math.max(0,Math.min(g.maxHp,g.hp+p.hp_change));
+    if(p.sanity_change)g.sanity=Math.max(0,Math.min(g.maxSanity,g.sanity+p.sanity_change));
+    if(p.condition_add&&!g.conditions.includes(p.condition_add))g.conditions.push(p.condition_add);
+    if(p.condition_remove)g.conditions=g.conditions.filter(x=>x!==p.condition_remove);
+    if(p.log_entry)g.log.unshift({turn:g.turnNum,text:p.log_entry});
+    g.turnNum++;g.gameStarted=true;g.selectedAction="";g.actionDetail="";
+  }catch(e){g.narrative="The void swallows the signal. The GM could not be reached. Check your GM_ENDPOINT configuration.";}
+  g.pendingGM=false;render();
+}
+function startGame(){const c=state.char;const hw=GALAXY.homeworlds[c.species];
+  callGM(`The game begins. ${c.name}, a ${c.species} ${c.career} (origin ${c.origin}), is in ${hw.capital}, the capital city of ${hw.world}, homeworld of the ${hw.empire}. Set an immediate, dangerous opening scene grounded in this location.`,null);}
+function submitTurn(){
+  const g=state.game;if(!g.selectedAction)return;
+  const a=DATA.actions.find(x=>x.id===g.selectedAction);const d=g.actionDetail.trim();
+  callGM(`Turn ${g.turnNum}. Player chooses: "${a.label}". ${d?`Note: "${d}"`:""} Resolve this. HP ${g.hp}/${g.maxHp}, Sanity ${g.sanity}/${g.maxSanity}.`,g.selectedAction);
+  if(g.selectedAction==="move_cautious"||g.selectedAction==="move_fast"){
+    const{x,y}=g.playerPos;
+    const dirs=[[1,0],[-1,0],[0,1],[0,-1]].filter(([dx,dy])=>{const nx=x+dx,ny=y+dy;
+      return nx>=0&&nx<12&&ny>=0&&ny<8&&g.mapData[ny][nx].t!=="wall";});
+    if(dirs.length){const[dx,dy]=dirs[Math.floor(Math.random()*dirs.length)];
+      g.playerPos={x:x+dx,y:y+dy};revealAround(g.playerPos.x,g.playerPos.y,2);}}
+}
+
+/* ============================ RENDER ====================================== */
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function render(){const root=document.getElementById("root");
+  if(state.phase==="create") root.innerHTML=renderCreate();
+  else if(state.phase==="galaxy") root.innerHTML=renderGalaxy();
+  else root.innerHTML=renderGame();
+  bindEvents();}
+
+function renderCreate(){
+  const step=state.createStep;
+  const dots=createSteps.map((s,i)=>`<div class="step-dot ${i<step?"done":i===step?"active":""}"></div>`).join("");
+  const stepFns=[renderStep0,renderStep1,renderStep2,renderStep3,renderStep4,renderStep5,renderStep6];
+  return `<div style="padding-bottom:2rem">
+    <div style="margin-bottom:1.5rem">
+      <p class="muted" style="margin-bottom:4px">Character creation — step ${step+1} of ${createSteps.length}</p>
+      <h2 style="margin-bottom:8px">${createSteps[step]}</h2>
+      <div class="step-indicator">${dots}</div>
+    </div>${stepFns[step]()}</div>`;
+}
+function renderStep0(){return `<div class="card">
+  <div class="field"><label>Character name</label>
+    <input type="text" id="char-name" value="${esc(state.char.name)}" placeholder="Enter a name" /></div>
+  <p style="font-size:13px;color:var(--text-tertiary);margin-bottom:1rem">Name has no mechanical effect. Choose what fits the void.</p>
+  <button class="btn btn-primary" id="step-next" ${!state.char.name.trim()?"disabled":""}>Continue →</button></div>`;}
+function renderStep1(){const sel=state.char.species;
+  return `<div><p style="margin-bottom:1rem">Choose one of the twelve species.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:1.25rem">
+    ${Object.entries(DATA.species).map(([n,d])=>`<div class="spec-card ${sel===n?"selected":""}" data-spec="${n}">
+      <div style="font-size:14px;font-weight:500;margin-bottom:2px">${n}</div>
+      <div style="font-size:12px;color:var(--text-secondary)">${d.desc}</div></div>`).join("")}</div>
+    ${sel?`<button class="btn btn-primary" id="step-next">Continue →</button>`:`<p class="muted">Select a species to continue.</p>`}</div>`;}
+function renderStep2(){const sp=state.char.species;if(!sp)return"<p>No species selected.</p>";
+  const v=DATA.variants[sp],c=state.char;
+  const grp=(label,items,key)=>`<div style="margin-bottom:1.25rem"><h3>${label}</h3>
+    ${items.map(it=>`<div class="spec-card ${c[key]===it.n?"selected":""}" data-variant="${key}" data-val="${esc(it.n)}">
+      <div style="font-size:13px;font-weight:500">${it.n}</div>
+      <div style="font-size:12px;color:var(--text-secondary)">${it.b}</div></div>`).join("")}</div>`;
+  const ready=c.head&&c.arms&&c.legs;
+  return `<div class="card"><p style="margin-bottom:1rem">Select one variant per category. Each grants skill bonuses.</p>
+    ${grp("Head",v.heads,"head")}${grp("Arms",v.arms,"arms")}${grp("Legs",v.legs,"legs")}
+    ${ready?`<button class="btn btn-primary" id="step-next">Continue →</button>`:`<p class="muted">Select head, arms, and legs.</p>`}</div>`;}
+function renderStep3(){const sel=state.char.career;
+  return `<div><p style="margin-bottom:1rem">Choose your career. It defines starting skills and abilities, and cannot be changed later.</p>
+    ${Object.entries(DATA.careers).map(([n,d])=>`<div class="spec-card ${sel===n?"selected":""}" data-career="${n}">
+      <div style="font-size:14px;font-weight:500;margin-bottom:2px">${n}</div>
+      <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">${d.desc}</div>
+      <div style="font-size:11px;color:var(--text-tertiary)">${Object.entries(d.startSkills).map(([s,v])=>s+" "+v).join(" · ")}</div>
+      <div style="font-size:11px;color:var(--text-info);margin-top:4px">Tier 1: ${d.t1}</div></div>`).join("")}
+    ${sel?`<button class="btn btn-primary" id="step-next">Continue →</button>`:`<p class="muted">Select a career.</p>`}</div>`;}
+function renderStep4(){const sel=state.char.origin;
+  return `<div class="card"><p style="margin-bottom:1rem">Your origin grants +1 to one skill. Choose, or roll 2d6.</p>
+    <button class="btn btn-sm" id="roll-origin" style="margin-bottom:1rem">Roll 2d6</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:1.25rem">
+    ${DATA.origins.map(o=>`<div class="origin-card ${sel===o.name?"selected":""}" data-origin="${esc(o.name)}">
+      <div class="origin-name">${o.name}</div><div class="origin-bonus">+1 ${o.bonus}</div></div>`).join("")}</div>
+    ${sel?`<button class="btn btn-primary" id="step-next">Continue →</button>`:`<p class="muted">Select or roll an origin.</p>`}</div>`;}
+function renderStep5(){const c=state.char,pts=c.attrPointsLeft;
+  return `<div class="card"><p style="margin-bottom:8px">All attributes start at 4. Distribute 7 points. No attribute may exceed 6 or gain more than +2.</p>
+    <p class="pts-left">Points remaining: ${pts}</p>
+    ${DATA.attributes.map(a=>{const val=c.attrs[a],added=val-4;
+      return `<div class="attr-row"><span class="attr-label">${a}</span>
+        <span style="font-size:11px;color:var(--text-tertiary);flex:1">${ATTR_DESCS[a]}</span>
+        <div class="attr-btns"><button class="attr-btn" data-attr="${a}" data-op="minus" ${val<=4?"disabled":""}>−</button>
+        <span class="attr-val">${val}</span>
+        <button class="attr-btn" data-attr="${a}" data-op="plus" ${val>=6||pts<=0||added>=2?"disabled":""}>+</button></div></div>`;}).join("")}
+    <div class="divider"></div>
+    <div style="font-size:13px;color:var(--text-secondary);margin-bottom:1rem">HP will be ${c.attrs.Body*3+(c.species==="Drask"?4:0)} · Defense will be ${8+c.attrs.Agility+(["Mercenary","Bounty Hunter","Commander"].includes(c.career)?1:0)}</div>
+    <button class="btn btn-primary" id="step-next">Continue →</button></div>`;}
+function renderStep6(){const c=state.char;applyVariantBonuses();const gear=DATA.careers[c.career].gear;
+  return `<div>
+    <div class="card" style="margin-bottom:1rem"><h3 style="margin-bottom:8px">Identity</h3>
+      <div style="font-size:14px;margin-bottom:4px"><strong>${esc(c.name)}</strong> — ${c.species} ${c.career}</div>
+      <div style="font-size:13px;color:var(--text-secondary)">Origin: ${c.origin} · Head: ${c.head} · Arms: ${c.arms} · Legs: ${c.legs}</div></div>
+    <div class="card" style="margin-bottom:1rem"><h3 style="margin-bottom:8px">Derived stats</h3>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="val">${c.attrs.Body*3+(c.species==="Drask"?4:0)}</div><div class="lbl">HP</div></div>
+        <div class="stat-box"><div class="val">${8+c.attrs.Agility+(["Mercenary","Bounty Hunter","Commander"].includes(c.career)?1:0)}</div><div class="lbl">Defense</div></div>
+        <div class="stat-box"><div class="val">6</div><div class="lbl">Sanity</div></div></div>
+      <div class="row3">${DATA.attributes.map(a=>`<div class="stat-box"><div class="val">${c.attrs[a]}</div><div class="lbl">${a}</div></div>`).join("")}</div></div>
+    <div class="card" style="margin-bottom:1rem"><h3 style="margin-bottom:8px">Skills</h3>
+      <div class="skill-grid">${DATA.skills.map(s=>`<div class="skill-row"><span class="sk-name">${s}</span><span class="sk-val">${c.skills[s]}</span></div>`).join("")}</div></div>
+    <div class="card" style="margin-bottom:1rem"><h3 style="margin-bottom:8px">Starting gear</h3>
+      ${Object.entries(gear).map(([k,v])=>`<div class="gear-item"><span class="gear-name">${k[0].toUpperCase()+k.slice(1)}</span><span class="gear-stat">${v}</span></div>`).join("")}
+      <div class="gear-item"><span class="gear-name">Standard</span><span class="gear-stat">Utility Droid, Corvette, Void Suit, Backpack</span></div></div>
+    <div class="card" style="margin-bottom:1rem"><h3 style="margin-bottom:8px">Tier 1 ability</h3>
+      <p style="font-size:13px;color:var(--text-secondary)">${DATA.careers[c.career].t1}</p><div class="divider"></div>
+      <h3 style="margin-bottom:8px">Species abilities</h3>
+      ${DATA.species[c.species].abilities.map(a=>`<p style="font-size:13px;color:var(--text-secondary);margin-bottom:4px">${a}</p>`).join("")}</div>
+    <button class="btn btn-primary" id="begin-game" style="width:100%">Begin — Enter the void →</button></div>`;}
+
+function renderGalaxy(){
+  const c=state.char;
+  const hw=GALAXY.homeworlds[c.species];
+  const pos=GALAXY.markerPos[hw.world];
+  /* Mini character stat pills */
+  const statPills=DATA.attributes.map(a=>`<span style="display:inline-flex;flex-direction:column;align-items:center;background:var(--bg-secondary);border:0.5px solid var(--border-tertiary);border-radius:var(--radius-md);padding:5px 10px;min-width:48px"><span style="font-size:15px;font-weight:500">${c.attrs[a]}</span><span style="font-size:10px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.05em">${a.slice(0,3)}</span></span>`).join("");
+  const hpMax=state.game.maxHp;
+  return `<div style="padding-bottom:2rem">
+    <!-- Header -->
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:1.25rem;flex-wrap:wrap">
+      <div>
+        <h2 style="margin-bottom:2px">${esc(c.name)}</h2>
+        <div class="muted">${c.species} ${c.career} · ${c.origin}</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div style="text-align:right">
+          <div class="muted" style="font-size:11px">HP ${hpMax} · DEF ${state.game.def} · SAN 6</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Attribute pills -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:1.25rem">${statPills}</div>
+
+    <!-- Galaxy map + location panel -->
+    <div class="card" style="margin-bottom:1rem;padding:0;overflow:hidden">
+      <div style="position:relative;width:100%;background:#000">
+        <!-- Map image — uses the galaxy_map.png from project if hosted, otherwise a dark placeholder -->
+        <div id="galaxy-map-wrap" style="position:relative;width:100%;padding-top:75%;background:linear-gradient(135deg,#0a0a18 0%,#0d0d22 40%,#080814 100%)">
+          <!-- Star field SVG background (no external assets needed) -->
+          <svg style="position:absolute;inset:0;width:100%;height:100%" viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid slice">
+            <!-- Region blobs -->
+            <ellipse cx="400" cy="300" rx="220" ry="180" fill="none" stroke="#8b7fd4" stroke-width="0.5" stroke-dasharray="3 5" opacity="0.3"/>
+            <ellipse cx="400" cy="300" rx="140" ry="110" fill="#1a1430" opacity="0.6"/>
+            <ellipse cx="400" cy="300" rx="80" ry="60" fill="#241a3c" opacity="0.7"/>
+            <ellipse cx="400" cy="300" rx="35" ry="28" fill="#c9a227" opacity="0.15"/>
+            <!-- Region labels -->
+            <text x="400" y="210" text-anchor="middle" font-size="9" fill="#8b7fd4" opacity="0.5" font-family="sans-serif" letter-spacing="2">OUTER RIM — THE FRINGE</text>
+            <text x="170" y="295" text-anchor="middle" font-size="8" fill="#c96b3a" opacity="0.6" font-family="sans-serif" transform="rotate(-8,170,295)">WESTERN MARCHES</text>
+            <text x="630" y="295" text-anchor="middle" font-size="8" fill="#9b6fc8" opacity="0.6" font-family="sans-serif" transform="rotate(8,630,295)">EASTERN VEIL</text>
+            <text x="400" y="182" text-anchor="middle" font-size="7" fill="#8b7fd4" opacity="0.4" font-family="sans-serif">THE FRINGE</text>
+            <text x="400" y="305" text-anchor="middle" font-size="9" fill="#c9a227" opacity="0.35" font-family="sans-serif" letter-spacing="1">THE FORGE</text>
+            <text x="400" y="490" text-anchor="middle" font-size="8" fill="#8b3a3a" opacity="0.5" font-family="sans-serif" letter-spacing="1">THE WOUNDS</text>
+            <!-- Trade lane lines -->
+            <circle cx="400" cy="300" r="78" fill="none" stroke="#c9a227" stroke-width="0.4" stroke-dasharray="4 6" opacity="0.25"/>
+            <circle cx="400" cy="300" r="145" fill="none" stroke="#c9a227" stroke-width="0.3" stroke-dasharray="2 8" opacity="0.15"/>
+            <line x1="400" y1="180" x2="400" y2="420" stroke="#c9a227" stroke-width="0.3" stroke-dasharray="3 7" opacity="0.2"/>
+            <line x1="256" y1="222" x2="544" y2="378" stroke="#c9a227" stroke-width="0.3" stroke-dasharray="3 7" opacity="0.2"/>
+            <line x1="544" y1="222" x2="256" y2="378" stroke="#c9a227" stroke-width="0.3" stroke-dasharray="3 7" opacity="0.2"/>
+            <!-- Void breach zone -->
+            <ellipse cx="400" cy="430" rx="120" ry="40" fill="#3a0a0a" opacity="0.4"/>
+            <text x="400" y="435" text-anchor="middle" font-size="7" fill="#8b3a3a" opacity="0.6" font-family="sans-serif">SHADOW BREACH ZONES</text>
+            <!-- All 12 homeworld dots -->
+            ${Object.entries(GALAXY.homeworlds).map(([sp,hw])=>{
+              const pos=GALAXY.markerPos[hw.world];
+              if(!pos)return"";
+              const px=pos.x/100*800,py=pos.y/100*600;
+              const isPlayer=sp===c.species;
+              return `<g>
+                <circle cx="${px}" cy="${py}" r="${isPlayer?7:4}" fill="${isPlayer?"#c9a227":"#4a4870"}" opacity="${isPlayer?1:0.6}" ${isPlayer?'filter="url(#glow)"':""}/>
+                ${isPlayer?`<circle cx="${px}" cy="${py}" r="12" fill="none" stroke="#c9a227" stroke-width="1" opacity="0.5"><animate attributeName="r" values="10;16;10" dur="2s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.5;0;0.5" dur="2s" repeatCount="indefinite"/></circle>`:""}
+                <text x="${px}" y="${py-10}" text-anchor="middle" font-size="${isPlayer?9:7}" fill="${isPlayer?"#e8c84a":"#7a78a0"}" font-family="sans-serif" opacity="${isPlayer?1:0.7}">${hw.world}</text>
+              </g>`;
+            }).join("")}
+            <!-- Glow filter -->
+            <defs><filter id="glow"><feGaussianBlur stdDeviation="3" result="coloredBlur"/><feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- Location info card -->
+    <div class="card" style="margin-bottom:1rem">
+      <div style="font-size:11px;font-weight:500;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">${hw.empire} · ${hw.region}</div>
+      <h3 style="margin-bottom:2px">${hw.capital}</h3>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-bottom:10px">Capital city · ${hw.world}</div>
+      <p style="font-size:13px;line-height:1.7">${hw.homeDesc}</p>
+    </div>
+
+    <!-- Portrait + path selection row -->
+    <div style="display:grid;grid-template-columns:120px 1fr;gap:12px;margin-bottom:1rem;align-items:start">
+
+      <!-- Character portrait placeholder -->
+      <div style="background:var(--bg-secondary);border:0.5px dashed var(--border-secondary);border-radius:var(--radius-md);aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:8px">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+        <span style="font-size:10px;color:var(--text-tertiary);text-align:center;line-height:1.3">Portrait<br>coming soon</span>
+      </div>
+
+      <!-- Path selection -->
+      <div class="card" style="padding:1rem">
+        <h3 style="margin-bottom:4px;font-size:14px">Choose your path</h3>
+        <p style="font-size:12px;margin-bottom:12px;color:var(--text-secondary)">You are in ${hw.capital}. The galaxy does not care. Pick how you move through it.</p>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button class="btn btn-primary" id="solo-adventure" style="width:100%;padding:10px 14px;font-size:14px;justify-content:center">
+            Solo Adventure →
+          </button>
+          <button class="btn" id="group-adventure" style="width:100%;padding:10px 14px;font-size:14px;justify-content:center;opacity:0.45;cursor:not-allowed" disabled>
+            Group Adventure
+            <span style="font-size:11px;color:var(--text-tertiary);margin-left:6px">(Coming soon)</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Full character sheet button -->
+    <button class="btn" id="toggle-full-sheet" style="width:100%;margin-bottom:1rem;justify-content:center;font-size:13px">
+      View full character sheet ↓
+    </button>
+
+    <!-- Full character sheet (hidden by default) -->
+    <div id="full-sheet" style="display:none">
+
+      <!-- Identity + portrait -->
+      <div class="card" style="margin-bottom:1rem">
+        <div style="display:grid;grid-template-columns:1fr 140px;gap:16px;align-items:start">
+          <div>
+            <h3 style="margin-bottom:6px">${esc(c.name)}</h3>
+            <div style="font-size:13px;color:var(--text-secondary);margin-bottom:2px">${c.species} · ${c.career} · Tier 1</div>
+            <div style="font-size:13px;color:var(--text-secondary);margin-bottom:2px">Origin: ${c.origin}</div>
+            <div style="font-size:13px;color:var(--text-secondary);margin-bottom:8px">Head: ${c.head} · Arms: ${c.arms} · Legs: ${c.legs}</div>
+            <div style="font-size:12px;color:var(--text-tertiary)">Starting location: ${hw.capital}, ${hw.world}</div>
+          </div>
+          <!-- Full body image placeholder -->
+          <div style="background:var(--bg-secondary);border:0.5px dashed var(--border-secondary);border-radius:var(--radius-md);aspect-ratio:2/3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:10px">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.2"><circle cx="12" cy="5" r="3"/><path d="M12 8v6M9 11l-2 5M15 11l2 5M10 14h4"/></svg>
+            <span style="font-size:10px;color:var(--text-tertiary);text-align:center;line-height:1.4">Full body<br>image<br>coming soon</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Derived stats -->
+      <div class="card" style="margin-bottom:1rem">
+        <h3 style="margin-bottom:8px">Combat Stats</h3>
+        <div class="stat-grid">
+          <div class="stat-box"><div class="val">${state.game.hp}/${state.game.maxHp}</div><div class="lbl">HP</div></div>
+          <div class="stat-box"><div class="val">${state.game.def}</div><div class="lbl">Defense</div></div>
+          <div class="stat-box"><div class="val">6/7</div><div class="lbl">Sanity</div></div>
+        </div>
+        <div class="row3">${DATA.attributes.map(a=>`<div class="stat-box"><div class="val">${c.attrs[a]}</div><div class="lbl">${a}</div></div>`).join("")}</div>
+      </div>
+
+      <!-- Skills -->
+      <div class="card" style="margin-bottom:1rem">
+        <h3 style="margin-bottom:8px">Skills</h3>
+        <div class="skill-grid">${DATA.skills.map(s=>`<div class="skill-row"><span class="sk-name">${s}</span><span class="sk-val">${c.skills[s]}</span></div>`).join("")}</div>
+      </div>
+
+      <!-- Abilities -->
+      <div class="card" style="margin-bottom:1rem">
+        <h3 style="margin-bottom:8px">Abilities</h3>
+        <div style="font-size:11px;font-weight:500;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">Tier 1 — ${c.career}</div>
+        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">${DATA.careers[c.career].t1}</p>
+        <div style="font-size:11px;font-weight:500;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">Species — ${c.species}</div>
+        ${DATA.species[c.species].abilities.map(a=>`<p style="font-size:13px;color:var(--text-secondary);margin-bottom:4px">${a}</p>`).join("")}
+      </div>
+
+      <!-- Loadout -->
+      <div class="card" style="margin-bottom:1rem">
+        <h3 style="margin-bottom:8px">Loadout</h3>
+        ${Object.entries(DATA.careers[c.career].gear).map(([k,v])=>`<div class="gear-item"><span class="gear-name">${k[0].toUpperCase()+k.slice(1)}</span><span class="gear-stat">${v}</span></div>`).join("")}
+        <div class="gear-item"><span class="gear-name">Utility Droid</span><span class="gear-stat">Standard issue</span></div>
+        <div class="gear-item"><span class="gear-name">Void Suit</span><span class="gear-stat">Basic</span></div>
+        <div class="gear-item"><span class="gear-name">Backpack</span><span class="gear-stat">Standard</span></div>
+        <div class="gear-item"><span class="gear-name">Wealth Tier</span><span class="gear-stat">1 — Scrap</span></div>
+      </div>
+
+      <!-- Standard Corvette -->
+      <div class="card" style="margin-bottom:1rem">
+        <h3 style="margin-bottom:8px">Standard Corvette</h3>
+        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:10px">Small modular survival craft. Your transport, shelter, cargo hold, escape route, and lifeline.</p>
+        <div class="gear-item"><span class="gear-name">Frame</span><span class="gear-stat">Standard Light Corvette</span></div>
+        <div class="gear-item"><span class="gear-name">Cockpit</span><span class="gear-stat">Compact</span></div>
+        <div class="gear-item"><span class="gear-name">Life Support</span><span class="gear-stat">Standard system</span></div>
+        <div class="gear-item"><span class="gear-name">Engine Array</span><span class="gear-stat">Basic</span></div>
+        <div class="gear-item"><span class="gear-name">Scanner</span><span class="gear-stat">Short-range</span></div>
+        <div class="gear-item"><span class="gear-name">Cargo Storage</span><span class="gear-stat">Standard hold</span></div>
+        <div class="gear-item"><span class="gear-name">Docking Clamp</span><span class="gear-stat">Standard</span></div>
+        <div class="gear-item"><span class="gear-name">Weapon Mount</span><span class="gear-stat">Starter mount</span></div>
+      </div>
+
+      <button class="btn" id="close-full-sheet" style="width:100%;justify-content:center;font-size:13px;margin-bottom:1rem">
+        Close character sheet ↑
+      </button>
+    </div>
+  </div>`;
+}
+
+function renderGame(){const g=state.game,c=state.char;
+  const tabs=["play","sheet","map","log"],labels=["Play","Character","Map","Log"];
+  return `<div>
+    ${!GM_ENDPOINT?`<div class="demo-banner">Demo mode — AI GM not connected. Set GM_ENDPOINT to enable the live Void Master.</div>`:""}
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
+      <div><div style="font-size:16px;font-weight:500">${esc(c.name)}</div>
+        <div class="muted">${c.species} ${c.career} · Turn ${g.turnNum}</div></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <div><div class="muted" style="font-size:11px;text-align:right">HP ${g.hp}/${g.maxHp}</div>
+          <div class="hp-bar-wrap" style="width:80px"><div class="hp-bar" style="width:${Math.max(0,Math.round(g.hp/g.maxHp*100))}%;background:${g.hp/g.maxHp>0.5?"#1d9e75":g.hp/g.maxHp>0.25?"#ef9f27":"#e24b4a"}"></div></div></div>
+        <div><div class="muted" style="font-size:11px;text-align:right">SAN ${g.sanity}/${g.maxSanity}</div>
+          <div class="san-bar-wrap" style="width:80px"><div class="san-bar" style="width:${Math.round(g.sanity/g.maxSanity*100)}%"></div></div></div></div></div>
+    <div class="tab-row">${tabs.map((t,i)=>`<button class="tab ${g.activeTab===t?"active":""}" data-tab="${t}">${labels[i]}</button>`).join("")}</div>
+    ${g.activeTab==="play"?renderPlay():g.activeTab==="sheet"?renderSheet():g.activeTab==="map"?renderMap():renderLog()}</div>`;}
+
+function renderPlay(){const g=state.game;
+  return `<div style="position:relative">
+    ${g.conditions.length?`<div style="margin-bottom:8px">${g.conditions.map(c=>`<span class="condition-tag">${esc(c)}</span>`).join("")}</div>`:""}
+    ${g.narrative?`<div class="narrative-box" style="margin-bottom:1rem">${esc(g.narrative)}</div>`:`<div class="narrative-box" style="margin-bottom:1rem;color:var(--text-tertiary);font-style:italic">Waiting for the void…</div>`}
+    ${g.pendingGM?`<div style="display:flex;align-items:center;gap:8px;margin-bottom:1rem"><div class="spinner"></div><span class="muted">The Void Master is watching…</span></div>`:""}
+    ${!g.gameStarted&&!g.pendingGM?`<button class="btn btn-primary" id="start-game" style="width:100%;margin-bottom:1rem">Enter the void — begin session →</button>`:""}
+    ${g.gameStarted&&!g.pendingGM?`<div><h3 style="margin-bottom:8px">Your action</h3>
+      ${DATA.actions.map(a=>`<div class="action-option ${g.selectedAction===a.id?"selected":""}" data-action="${a.id}">
+        <div class="action-label">${a.label}</div><div class="action-desc">${a.desc}</div></div>`).join("")}
+      <div class="field" style="margin-top:8px"><label>Add detail (optional)</label>
+        <textarea id="action-detail" rows="2" placeholder="Describe your approach, target, or intent…">${esc(g.actionDetail)}</textarea></div>
+      <button class="btn btn-primary" id="submit-turn" style="width:100%;margin-top:8px" ${!g.selectedAction?"disabled":""}>Submit turn →</button></div>`:""}</div>`;}
+
+function renderSheet(){const c=state.char,g=state.game;
+  return `<div>
+    <div class="card" style="margin-bottom:1rem">
+      <div class="sheet-section"><h3 style="margin-bottom:6px">Status</h3>
+        <div class="stat-grid">
+          <div class="stat-box"><div class="val">${g.hp}/${g.maxHp}</div><div class="lbl">HP</div></div>
+          <div class="stat-box"><div class="val">${g.def}</div><div class="lbl">Defense</div></div>
+          <div class="stat-box"><div class="val">${g.sanity}/${g.maxSanity}</div><div class="lbl">Sanity</div></div></div>
+        ${g.conditions.length?`<div style="margin-top:8px">${g.conditions.map(c=>`<span class="condition-tag">${esc(c)}</span>`).join("")}</div>`:""}</div>
+      <div class="divider"></div>
+      <div class="sheet-section"><h3 style="margin-bottom:8px">Attributes</h3>
+        <div class="row3">${DATA.attributes.map(a=>`<div class="stat-box"><div class="val">${c.attrs[a]}</div><div class="lbl">${a}</div></div>`).join("")}</div></div>
+      <div class="divider"></div>
+      <div class="sheet-section"><h3 style="margin-bottom:8px">Skills</h3>
+        <div class="skill-grid">${DATA.skills.map(s=>`<div class="skill-row"><span class="sk-name">${s}</span><span class="sk-val">${c.skills[s]}</span></div>`).join("")}</div></div></div>
+    <div class="card" style="margin-bottom:1rem"><h3 style="margin-bottom:8px">Abilities</h3>
+      <div style="font-size:12px;font-weight:500;color:var(--text-tertiary);margin-bottom:4px">TIER 1 — ${c.career.toUpperCase()}</div>
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:8px">${DATA.careers[c.career].t1}</p>
+      <div style="font-size:12px;font-weight:500;color:var(--text-tertiary);margin-bottom:4px">SPECIES — ${c.species.toUpperCase()}</div>
+      ${DATA.species[c.species].abilities.map(a=>`<p style="font-size:13px;color:var(--text-secondary);margin-bottom:4px">${a}</p>`).join("")}</div>
+    <div class="card"><h3 style="margin-bottom:8px">Gear</h3>
+      ${Object.entries(DATA.careers[c.career].gear).map(([k,v])=>`<div class="gear-item"><span class="gear-name">${k[0].toUpperCase()+k.slice(1)}</span><span class="gear-stat">${v}</span></div>`).join("")}
+      <div class="gear-item"><span class="gear-name">Also carries</span><span class="gear-stat">Utility Droid · Corvette · Void Suit</span></div>
+      <div class="gear-item"><span class="gear-name">Wealth Tier</span><span class="gear-stat">1 — Scrap</span></div></div></div>`;}
+
+function renderMap(){const g=state.game,W=12,H=8,px=g.playerPos.x,py=g.playerPos.y;let cells="";
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const key=x+","+y,rev=g.revealed.has(key),cell=g.mapData[y]?.[x]||{t:"empty"};
+    if(!rev){cells+=`<div class="cell cell-fog"></div>`;continue;}
+    if(x===px&&y===py){cells+=`<div class="cell cell-player" title="You">◆</div>`;continue;}
+    if(cell.npc==="threat"){cells+=`<div class="cell cell-threat" title="Threat">!</div>`;continue;}
+    if(cell.npc==="npc"){cells+=`<div class="cell cell-npc" title="Contact">?</div>`;continue;}
+    if(cell.item){cells+=`<div class="cell cell-item" title="Item">★</div>`;continue;}
+    if(cell.t==="wall"){cells+=`<div class="cell cell-wall"></div>`;continue;}
+    cells+=`<div class="cell cell-visible"></div>`;}
+  return `<div><div class="card" style="margin-bottom:1rem"><h3 style="margin-bottom:8px">Local area — fog of war</h3>
+    <div class="map-grid">${cells}</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--text-tertiary)">
+      <span><span style="background:#3c3489;color:#fff;padding:1px 6px;border-radius:3px">◆</span> You</span>
+      <span><span style="background:#a32d2d;color:#fff;padding:1px 6px;border-radius:3px">!</span> Threat</span>
+      <span><span style="background:#993c1d;color:#fff;padding:1px 6px;border-radius:3px">?</span> Contact</span>
+      <span><span style="background:#0f6e56;color:#fff;padding:1px 6px;border-radius:3px">★</span> Item</span></div></div>
+    <p style="font-size:13px;color:var(--text-secondary)">Map reveals as you move. Threats pulse red. Moving actions expand your range.</p></div>`;}
+
+function renderLog(){const g=state.game;
+  if(!g.log.length)return`<div class="card"><p style="font-size:13px;color:var(--text-tertiary)">No entries yet. Play a turn to begin the record.</p></div>`;
+  return `<div class="card"><h3 style="margin-bottom:8px">Turn log</h3>
+    ${g.log.map(e=>`<div class="log-entry"><span class="log-turn">T${e.turn}</span>${esc(e.text)}</div>`).join("")}</div>`;}
+
+/* ============================ EVENTS ====================================== */
+function bindEvents(){
+  const q=id=>document.getElementById(id);
+  if(state.phase==="create"){
+    const ni=q("char-name");if(ni)ni.oninput=()=>{state.char.name=ni.value;const b=q("step-next");if(b)b.disabled=!ni.value.trim();};
+    document.querySelectorAll("[data-spec]").forEach(el=>el.onclick=()=>{state.char.species=el.dataset.spec;state.char.head=state.char.arms=state.char.legs="";render();});
+    document.querySelectorAll("[data-variant]").forEach(el=>el.onclick=()=>{state.char[el.dataset.variant]=el.dataset.val;render();});
+    document.querySelectorAll("[data-career]").forEach(el=>el.onclick=()=>{state.char.career=el.dataset.career;render();});
+    document.querySelectorAll("[data-origin]").forEach(el=>el.onclick=()=>{state.char.origin=el.dataset.origin;render();});
+    const rb=q("roll-origin");if(rb)rb.onclick=()=>{const t=rollDice(6)+rollDice(6);const idx=Math.max(0,Math.min(DATA.origins.length-1,t-2));state.char.origin=DATA.origins[idx].name;render();};
+    document.querySelectorAll("[data-attr]").forEach(el=>el.onclick=()=>{const a=el.dataset.attr,op=el.dataset.op,cur=state.char.attrs[a];
+      if(op==="plus"&&cur<6&&state.char.attrPointsLeft>0&&(cur-4)<2){state.char.attrs[a]++;state.char.attrPointsLeft--;}
+      else if(op==="minus"&&cur>4){state.char.attrs[a]--;state.char.attrPointsLeft++;}render();});
+    const nb=q("step-next");if(nb)nb.onclick=()=>{state.createStep=Math.min(createSteps.length-1,state.createStep+1);render();};
+    const bb=q("begin-game");if(bb)bb.onclick=()=>{finalizeChar();state.phase="galaxy";render();};
+  }else if(state.phase==="galaxy"){
+    const solo=q("solo-adventure");
+    if(solo)solo.onclick=()=>{state.phase="game";render();};
+    const toggleBtn=q("toggle-full-sheet");
+    const sheet=q("full-sheet");
+    if(toggleBtn&&sheet){
+      toggleBtn.onclick=()=>{
+        const open=sheet.style.display!=="none";
+        sheet.style.display=open?"none":"block";
+        toggleBtn.textContent=open?"View full character sheet ↓":"Hide character sheet ↑";
+      };
+    }
+    const closeBtn=q("close-full-sheet");
+    if(closeBtn&&sheet){
+      closeBtn.onclick=()=>{
+        sheet.style.display="none";
+        if(toggleBtn)toggleBtn.textContent="View full character sheet ↓";
+      };
+    }
+  }else{
+    document.querySelectorAll("[data-tab]").forEach(el=>el.onclick=()=>{state.game.activeTab=el.dataset.tab;render();});
+    const sg=q("start-game");if(sg)sg.onclick=()=>startGame();
+    document.querySelectorAll("[data-action]").forEach(el=>el.onclick=()=>{state.game.selectedAction=el.dataset.action;render();});
+    const ad=q("action-detail");if(ad)ad.oninput=()=>{state.game.actionDetail=ad.value;};
+    const st=q("submit-turn");if(st)st.onclick=()=>submitTurn();
+  }
+}
+render();
+</script>
+</body>
+</html>
